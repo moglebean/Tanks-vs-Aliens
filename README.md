@@ -35,3 +35,6 @@ Weapons
 2. [x] Lets setup the base structure of the game.  We need a title screen, an options screen, a level intro, the active game (with per-level state), a death screen, a game over screen, a level complete screen, a game complete screen, and a pause screen.  Set up control and a state machine that goes through each screen in the obvious way.  For now, just put static content on each screen indicating the key to press to transition to the next possible states (e.g. in active game, have a key for complete the level, die, game over pause).  
 
 3. [x] Implement the base tank movement and the base weapon.  No obstacles, just tank moving around and shooting into the void.  Use a stock image for the tank and a circle for the bullets.  
+
+* Deployment *
+GitHub Pages deploys on push to `main` using `.github/workflows/deploy.yml`.
