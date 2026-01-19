@@ -17,7 +17,7 @@ export default class GameScene extends Phaser.Scene {
   constructor() {
     super("GameScene");
     this.level = 1;
-    this.maxLevels = 3;
+    this.maxLevels = 10;
     this.moveSpeed = 220;
     this.bulletSpeed = 420;
     this.bulletCooldownMs = 500;
@@ -39,10 +39,16 @@ export default class GameScene extends Phaser.Scene {
     this.blasterAmmo = 0;
     this.blasterAmmoMax = 25;
     this.alienSpeed = 130;
-    this.alienSpawnDelayMs = 5000;
+    this.baseAlienSpawnDelayMs = 5000;
+    this.minAlienSpawnDelayMs = 1500;
+    this.alienSpawnDelayMs = this.baseAlienSpawnDelayMs;
     this.isTankDying = false;
     this.isTankInvulnerable = false;
     this.invulnerableMs = 800;
+    this.levelObstacleCount = 5;
+    this.killsThisLevel = 0;
+    this.killsToComplete = 5;
+    this.tankInWater = false;
     this.lives = 3;
     this.health = 3;
     this.healthStart = 3;
@@ -119,6 +125,9 @@ export default class GameScene extends Phaser.Scene {
     this.alienSpawnTimer = null;
     this.powerups = this.physics.add.group();
     this.powerupTimer = null;
+    this.obstacles = this.physics.add.staticGroup();
+    this.waterZones = this.physics.add.staticGroup();
+    this.levelBounds = [];
 
     this.createBulletTexture();
     this.createHud();
@@ -141,6 +150,21 @@ export default class GameScene extends Phaser.Scene {
       this.tank,
       this.powerups,
       this.handlePowerupPickup,
+      null,
+      this
+    );
+    this.physics.add.collider(
+      this.tank,
+      this.obstacles
+    );
+    this.physics.add.collider(
+      this.aliens,
+      this.obstacles
+    );
+    this.physics.add.collider(
+      this.bullets,
+      this.obstacles,
+      this.handleBulletBlocked,
       null,
       this
     );
@@ -322,19 +346,22 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.updateWaterFlags();
+
     let velocityX = 0;
     let velocityY = 0;
+    const tankSpeed = this.tankInWater ? this.moveSpeed * 0.6 : this.moveSpeed;
 
     if (this.cursors.left.isDown) {
-      velocityX = -this.moveSpeed;
+      velocityX = -tankSpeed;
     } else if (this.cursors.right.isDown) {
-      velocityX = this.moveSpeed;
+      velocityX = tankSpeed;
     }
 
     if (this.cursors.up.isDown) {
-      velocityY = -this.moveSpeed;
+      velocityY = -tankSpeed;
     } else if (this.cursors.down.isDown) {
-      velocityY = this.moveSpeed;
+      velocityY = tankSpeed;
     }
 
     this.tank.setVelocity(velocityX, velocityY);
@@ -429,9 +456,12 @@ export default class GameScene extends Phaser.Scene {
         this.tank.x - alien.x,
         this.tank.y - alien.y
       ).normalize();
+      const alienSpeed = alien.getData("inWater")
+        ? this.alienSpeed * 0.6
+        : this.alienSpeed;
       alien.body.setVelocity(
-        toTank.x * this.alienSpeed,
-        toTank.y * this.alienSpeed
+        toTank.x * alienSpeed,
+        toTank.y * alienSpeed
       );
     });
   }
@@ -513,6 +543,9 @@ export default class GameScene extends Phaser.Scene {
     this.isTankDying = false;
     this.tank.setAlpha(1);
     this.resetWeaponState();
+    this.resetLevelProgress();
+    this.configureLevelDifficulty();
+    this.buildLevelLayout();
 
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.remove(false);
@@ -533,6 +566,7 @@ export default class GameScene extends Phaser.Scene {
     this.bullets.clear(true, true);
     this.aliens.clear(true, true);
     this.powerups.clear(true, true);
+    this.clearLevelLayout();
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.remove(false);
       this.alienSpawnTimer = null;
@@ -614,6 +648,11 @@ export default class GameScene extends Phaser.Scene {
       y = Phaser.Math.Between(0, height);
     }
 
+    const spawnRect = new Phaser.Geom.Rectangle(x - 12, y - 12, 24, 24);
+    if (!this.isAreaClear(spawnRect)) {
+      return;
+    }
+
     const alien = this.physics.add.image(x, y, "alien");
     alien.body.setAllowGravity(false);
     alien.setDepth(1);
@@ -632,6 +671,7 @@ export default class GameScene extends Phaser.Scene {
     this.playExplosion(alien.x, alien.y, 0x7bd86b);
     alien.destroy();
     this.score += 11;
+    this.registerAlienKill();
     this.updateHud();
   }
 
@@ -643,6 +683,7 @@ export default class GameScene extends Phaser.Scene {
     if (alien && alien.active) {
       this.playExplosion(alien.x, alien.y, 0x7bd86b);
       alien.destroy();
+      this.registerAlienKill();
     }
 
     this.health = Math.max(0, this.health - 1);
@@ -926,7 +967,7 @@ export default class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const margin = 40;
     const x = Phaser.Math.Between(margin, width - margin);
-    const y = Phaser.Math.Between(margin + 40, height - margin);
+    const y = Phaser.Math.Between(margin + 50, height - margin);
     const powerup = this.physics.add.image(x, y, "blaster");
     powerup.body.setAllowGravity(false);
     powerup.setDepth(1);
@@ -941,6 +982,135 @@ export default class GameScene extends Phaser.Scene {
       this.weapon = weapon;
     }
     this.updateHud();
+  }
+
+  handleBulletBlocked(bullet) {
+    if (bullet && bullet.active) {
+      bullet.destroy();
+      if (this.lastBullet === bullet) {
+        this.lastBullet = null;
+      }
+    }
+  }
+
+  updateWaterFlags() {
+    this.tankInWater = false;
+    this.physics.overlap(this.tank, this.waterZones, () => {
+      this.tankInWater = true;
+    });
+
+    this.aliens.getChildren().forEach((alien) => {
+      alien.setData("inWater", false);
+    });
+    this.physics.overlap(this.aliens, this.waterZones, (alien) => {
+      if (alien) {
+        alien.setData("inWater", true);
+      }
+    });
+  }
+
+  resetLevelProgress() {
+    this.killsThisLevel = 0;
+    this.killsToComplete = 5 + (this.level - 1) * 2;
+  }
+
+  configureLevelDifficulty() {
+    const levelFactor = Math.max(0, this.level - 1);
+    this.levelObstacleCount = 5 + levelFactor;
+    this.alienSpawnDelayMs = Math.max(
+      this.minAlienSpawnDelayMs,
+      this.baseAlienSpawnDelayMs - levelFactor * 350
+    );
+  }
+
+  registerAlienKill() {
+    if (this.stateMachine.currentState !== STATES.PLAYING) {
+      return;
+    }
+    this.killsThisLevel += 1;
+    if (this.killsThisLevel >= this.killsToComplete) {
+      this.stateMachine.setState(STATES.LEVEL_COMPLETE);
+    }
+  }
+
+  buildLevelLayout() {
+    this.clearLevelLayout();
+    const { width, height } = this.scale;
+    const padding = 40;
+    const hudOffset = 50;
+    const spawnSafe = new Phaser.Geom.Rectangle(
+      width / 2 - 70,
+      height / 2 - 70,
+      140,
+      140
+    );
+    const obstacleTypes = ["wall", "rock", "water", "rock", "water"];
+
+    let created = 0;
+    let attempts = 0;
+    while (created < this.levelObstacleCount && attempts < 80) {
+      attempts += 1;
+      const type = obstacleTypes[created % obstacleTypes.length];
+      const size = this.getObstacleSize(type);
+      const x = Phaser.Math.Between(padding, width - padding);
+      const y = Phaser.Math.Between(hudOffset, height - padding);
+      const rect = new Phaser.Geom.Rectangle(
+        x - size.width / 2,
+        y - size.height / 2,
+        size.width,
+        size.height
+      );
+      if (Phaser.Geom.Rectangle.Overlaps(rect, spawnSafe)) {
+        continue;
+      }
+      if (!this.isAreaClear(rect)) {
+        continue;
+      }
+
+      this.addObstacle(type, x, y, size.width, size.height);
+      this.levelBounds.push(rect);
+      created += 1;
+    }
+  }
+
+  clearLevelLayout() {
+    this.obstacles.clear(true, true);
+    this.waterZones.clear(true, true);
+    this.levelBounds = [];
+  }
+
+  getObstacleSize(type) {
+    if (type === "wall") {
+      return { width: 160, height: 18 };
+    }
+    if (type === "water") {
+      return { width: 140, height: 60 };
+    }
+    return { width: 48, height: 48 };
+  }
+
+  addObstacle(type, x, y, width, height) {
+    if (type === "water") {
+      const water = this.add
+        .rectangle(x, y, width, height, 0x2b6f8a, 0.45)
+        .setDepth(0);
+      this.physics.add.existing(water, true);
+      this.waterZones.add(water);
+      return;
+    }
+
+    const color = type === "wall" ? 0x4f5d75 : 0x6b5f55;
+    const obstacle = this.add
+      .rectangle(x, y, width, height, color, 1)
+      .setDepth(0);
+    this.physics.add.existing(obstacle, true);
+    this.obstacles.add(obstacle);
+  }
+
+  isAreaClear(rect) {
+    return !this.levelBounds.some((existing) =>
+      Phaser.Geom.Rectangle.Overlaps(existing, rect)
+    );
   }
 
   handlePauseToggle() {
