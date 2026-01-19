@@ -26,6 +26,14 @@ export default class GameScene extends Phaser.Scene {
     this.alienSpeed = 130;
     this.alienSpawnDelayMs = 5000;
     this.isTankDying = false;
+    this.isTankInvulnerable = false;
+    this.invulnerableMs = 800;
+    this.lives = 3;
+    this.health = 3;
+    this.healthStart = 3;
+    this.healthMax = 5;
+    this.score = 0;
+    this.debugVisible = false;
   }
 
   preload() {
@@ -36,6 +44,14 @@ export default class GameScene extends Phaser.Scene {
     this.load.image(
       "alien",
       new URL("../assets/alien.svg", import.meta.url).toString()
+    );
+    this.load.image(
+      "heart",
+      new URL("../assets/heart.svg", import.meta.url).toString()
+    );
+    this.load.image(
+      "weapon",
+      new URL("../assets/weapon.svg", import.meta.url).toString()
     );
   }
 
@@ -61,7 +77,7 @@ export default class GameScene extends Phaser.Scene {
     this.debugText = this.add
       .text(0, 0, "", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "14px",
+        fontSize: "10px",
         color: "#d2d7e6",
         align: "right",
         backgroundColor: "rgba(11, 19, 32, 0.6)",
@@ -69,6 +85,7 @@ export default class GameScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(10);
+    this.debugText.setVisible(this.debugVisible);
 
     const { width, height } = this.scale;
     this.tank = this.physics.add
@@ -83,6 +100,7 @@ export default class GameScene extends Phaser.Scene {
     this.alienSpawnTimer = null;
 
     this.createBulletTexture();
+    this.createHud();
 
     this.physics.add.overlap(
       this.bullets,
@@ -166,11 +184,13 @@ export default class GameScene extends Phaser.Scene {
     this.input.keyboard.on("keydown-TWO", () => this.handleSecondaryAction());
     this.input.keyboard.on("keydown-THREE", () => this.handleTertiaryAction());
     this.input.keyboard.on("keydown-FOUR", () => this.handleQuaternaryAction());
+    this.input.keyboard.on("keydown-G", () => this.toggleDebug());
   }
 
   handlePrimaryAction() {
     switch (this.stateMachine.currentState) {
       case STATES.TITLE:
+        this.resetRunStats();
         this.level = 1;
         this.stateMachine.setState(STATES.LEVEL_INTRO);
         break;
@@ -245,7 +265,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    this.updateDebugOverlay();
+    if (this.debugVisible) {
+      this.updateDebugOverlay();
+    }
 
     if (this.stateMachine.currentState !== STATES.PLAYING) {
       if (this.tank.body.enable) {
@@ -283,6 +305,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.updateBullets(delta);
     this.updateAliens();
+    this.updateHud();
   }
 
   updateTankFacing(velocityX, velocityY) {
@@ -386,10 +409,12 @@ export default class GameScene extends Phaser.Scene {
   enterGameplay(title, subtitle) {
     this.activateGameplay();
     this.renderScreen(title, subtitle);
+    this.hudContainer.setVisible(true);
   }
 
   resumeGameplay(title, subtitle) {
     this.renderScreen(title, subtitle);
+    this.hudContainer.setVisible(true);
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.paused = false;
     }
@@ -397,6 +422,7 @@ export default class GameScene extends Phaser.Scene {
 
   enterPause(title, subtitle) {
     this.renderScreen(title, subtitle);
+    this.hudContainer.setVisible(true);
     this.tank.setVelocity(0, 0);
     this.aliens.getChildren().forEach((alien) => {
       if (alien.body) {
@@ -416,6 +442,7 @@ export default class GameScene extends Phaser.Scene {
   enterNonGameplay(title, subtitle) {
     this.deactivateGameplay();
     this.renderScreen(title, subtitle);
+    this.hudContainer.setVisible(false);
   }
 
   activateGameplay() {
@@ -456,6 +483,9 @@ export default class GameScene extends Phaser.Scene {
       .setText(subtitle)
       .setPosition(width / 2, height / 2 + 32);
     this.debugText.setPosition(width - 12, 12);
+    if (this.hudContainer) {
+      this.hudContainer.setPosition(0, 0);
+    }
   }
 
   updateDebugOverlay() {
@@ -534,20 +564,42 @@ export default class GameScene extends Phaser.Scene {
     }
     this.playExplosion(alien.x, alien.y, 0x7bd86b);
     alien.destroy();
+    this.score += 11;
+    this.updateHud();
   }
 
-  handleTankHit() {
-    if (this.isTankDying) {
+  handleTankHit(tank, alien) {
+    if (this.isTankDying || this.isTankInvulnerable) {
       return;
     }
 
-    this.isTankDying = true;
-    this.tank.body.enable = false;
-    this.tank.setVelocity(0, 0);
-    this.playExplosion(this.tank.x, this.tank.y, 0xf5d77a);
-    this.cameras.main.flash(200, 255, 120, 120);
-    this.time.delayedCall(500, () => {
-      this.stateMachine.setState(STATES.GAME_OVER);
+    if (alien && alien.active) {
+      this.playExplosion(alien.x, alien.y, 0x7bd86b);
+      alien.destroy();
+    }
+
+    this.health = Math.max(0, this.health - 1);
+    this.updateHud();
+
+    if (this.health <= 0) {
+      this.handleLifeLoss();
+      return;
+    }
+
+    this.isTankInvulnerable = true;
+    this.cameras.main.flash(150, 120, 255, 180);
+    this.tweens.add({
+      targets: this.tank,
+      alpha: 0.3,
+      yoyo: true,
+      repeat: 5,
+      duration: 80,
+      onComplete: () => {
+        this.tank.setAlpha(1);
+      },
+    });
+    this.time.delayedCall(this.invulnerableMs, () => {
+      this.isTankInvulnerable = false;
     });
   }
 
@@ -561,5 +613,168 @@ export default class GameScene extends Phaser.Scene {
       duration: 300,
       onComplete: () => boom.destroy(),
     });
+  }
+
+  handleLifeLoss() {
+    this.lives = Math.max(0, this.lives - 1);
+    this.updateHud();
+
+    if (this.lives <= 0) {
+      this.isTankDying = true;
+      this.tank.body.enable = false;
+      this.tank.setVelocity(0, 0);
+      this.playExplosion(this.tank.x, this.tank.y, 0xf5d77a);
+      this.cameras.main.flash(200, 255, 120, 120);
+      this.time.delayedCall(500, () => {
+        this.stateMachine.setState(STATES.GAME_OVER);
+      });
+      return;
+    }
+
+    const respawnX = this.tank.x;
+    const respawnY = this.tank.y;
+
+    this.isTankDying = true;
+    this.tank.body.enable = false;
+    this.tank.setVelocity(0, 0);
+    this.tank.setVisible(false);
+    this.playExplosion(respawnX, respawnY, 0xf5d77a);
+    this.cameras.main.flash(200, 255, 120, 120);
+
+    this.time.delayedCall(3000, () => {
+      this.health = this.healthStart;
+      this.updateHud();
+      this.tank.setPosition(respawnX, respawnY);
+      this.tank.setVisible(true);
+      this.tank.body.enable = true;
+      this.isTankDying = false;
+      this.isTankInvulnerable = true;
+      this.tweens.add({
+        targets: this.tank,
+        alpha: 0.3,
+        yoyo: true,
+        repeat: 5,
+        duration: 80,
+        onComplete: () => {
+          this.tank.setAlpha(1);
+        },
+      });
+      this.time.delayedCall(this.invulnerableMs, () => {
+        this.isTankInvulnerable = false;
+      });
+    });
+  }
+
+  createHud() {
+    const { width } = this.scale;
+    const hudHeight = 36;
+    const padding = 8;
+
+    this.hudContainer = this.add.container(0, 0).setDepth(20);
+    const background = this.add
+      .rectangle(width / 2, hudHeight / 2, width, hudHeight, 0x0b1320, 0.65)
+      .setOrigin(0.5, 0.5);
+    this.hudContainer.add(background);
+
+    this.hudLivesIcon = this.add
+      .image(padding + 12, hudHeight / 2, "tank")
+      .setScale(0.28)
+      .setOrigin(0.5, 0.5);
+    this.hudContainer.add(this.hudLivesIcon);
+
+    this.hudLivesText = this.add
+      .text(padding + 26, 6, "", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "12px",
+        color: "#f6f0d6",
+      })
+      .setOrigin(0, 0);
+    this.hudContainer.add(this.hudLivesText);
+
+    this.hudHearts = [];
+    const heartsStartX = padding + 78;
+    for (let i = 0; i < this.healthMax; i += 1) {
+      const heart = this.add
+        .image(heartsStartX + i * 18, hudHeight / 2, "heart")
+        .setScale(0.8)
+        .setOrigin(0.5, 0.5);
+      this.hudHearts.push(heart);
+      this.hudContainer.add(heart);
+    }
+
+    this.hudScoreText = this.add
+      .text(width / 2 - 60, 6, "", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "12px",
+        color: "#f6f0d6",
+      })
+      .setOrigin(0, 0);
+    this.hudContainer.add(this.hudScoreText);
+
+    this.hudLevelText = this.add
+      .text(width / 2 + 30, 6, "", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "12px",
+        color: "#f6f0d6",
+      })
+      .setOrigin(0, 0);
+    this.hudContainer.add(this.hudLevelText);
+
+    this.hudWeaponIcon = this.add
+      .image(width - 170, hudHeight / 2, "weapon")
+      .setScale(1)
+      .setOrigin(0.5, 0.5);
+    this.hudContainer.add(this.hudWeaponIcon);
+
+    this.hudWeaponText = this.add
+      .text(width - 150, 6, "1: Base", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "12px",
+        color: "#f6f0d6",
+      })
+      .setOrigin(0, 0);
+    this.hudContainer.add(this.hudWeaponText);
+
+    this.hudBossText = this.add
+      .text(width - 70, 6, "Boss: ---", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "12px",
+        color: "#b9c0d4",
+      })
+      .setOrigin(0, 0);
+    this.hudContainer.add(this.hudBossText);
+
+    this.hudBossBar = this.add
+      .rectangle(width - 20, hudHeight / 2 + 6, 40, 6, 0x1b263b, 1)
+      .setOrigin(0.5, 0.5);
+    this.hudContainer.add(this.hudBossBar);
+
+    this.updateHud();
+    this.hudContainer.setVisible(false);
+  }
+
+  updateHud() {
+    if (!this.hudContainer) {
+      return;
+    }
+    this.hudLivesText.setText(`x${this.lives}`);
+    this.hudScoreText.setText(`Score: ${this.score}`);
+    this.hudLevelText.setText(`Level: ${this.level}`);
+    this.hudHearts.forEach((heart, index) => {
+      const isFull = index < this.health;
+      heart.setAlpha(isFull ? 1 : 0.25);
+    });
+  }
+
+  toggleDebug() {
+    this.debugVisible = !this.debugVisible;
+    this.debugText.setVisible(this.debugVisible);
+  }
+
+  resetRunStats() {
+    this.lives = 3;
+    this.health = this.healthStart;
+    this.score = 0;
+    this.updateHud();
   }
 }
