@@ -23,6 +23,21 @@ export default class GameScene extends Phaser.Scene {
     this.bulletCooldownMs = 500;
     this.nextShotAt = 0;
     this.lastMoveDir = new Phaser.Math.Vector2(1, 0);
+    this.baseWeapon = {
+      id: "base",
+      name: "Base",
+      bulletSpeed: 420,
+      cooldownMs: 500,
+    };
+    this.blasterWeapon = {
+      id: "blaster",
+      name: "Blaster",
+      bulletSpeed: 700,
+      cooldownMs: 200,
+    };
+    this.weapon = this.baseWeapon;
+    this.blasterAmmo = 0;
+    this.blasterAmmoMax = 25;
     this.alienSpeed = 130;
     this.alienSpawnDelayMs = 5000;
     this.isTankDying = false;
@@ -52,6 +67,10 @@ export default class GameScene extends Phaser.Scene {
     this.load.image(
       "weapon",
       new URL("../assets/weapon.svg", import.meta.url).toString()
+    );
+    this.load.image(
+      "blaster",
+      new URL("../assets/blaster.svg", import.meta.url).toString()
     );
   }
 
@@ -98,6 +117,8 @@ export default class GameScene extends Phaser.Scene {
     this.lastBullet = null;
     this.aliens = this.physics.add.group();
     this.alienSpawnTimer = null;
+    this.powerups = this.physics.add.group();
+    this.powerupTimer = null;
 
     this.createBulletTexture();
     this.createHud();
@@ -113,6 +134,13 @@ export default class GameScene extends Phaser.Scene {
       this.tank,
       this.aliens,
       this.handleTankHit,
+      null,
+      this
+    );
+    this.physics.add.overlap(
+      this.tank,
+      this.powerups,
+      this.handlePowerupPickup,
       null,
       this
     );
@@ -137,18 +165,18 @@ export default class GameScene extends Phaser.Scene {
           if (data && data.resume) {
             this.resumeGameplay(
               `Level ${this.level} - Active`,
-              "1: Complete  2: Die  3: Pause  4: Game Over"
+              "Esc: Pause  1: Base  2: Blaster"
             );
           } else {
             this.enterGameplay(
               `Level ${this.level} - Active`,
-              "1: Complete  2: Die  3: Pause  4: Game Over"
+              "Esc: Pause  1: Base  2: Blaster"
             );
           }
         },
       },
       [STATES.PAUSE]: {
-        onEnter: () => this.enterPause("Paused", "A: Resume"),
+        onEnter: () => this.enterPause("Paused", "Esc: Resume"),
       },
       [STATES.DEATH]: {
         onEnter: () => this.enterNonGameplay("You Died", "A: Retry  S: Game Over"),
@@ -180,10 +208,11 @@ export default class GameScene extends Phaser.Scene {
   registerInput() {
     this.input.keyboard.on("keydown-A", () => this.handlePrimaryAction());
     this.input.keyboard.on("keydown-S", () => this.handleSecondaryAction());
-    this.input.keyboard.on("keydown-ONE", () => this.handlePrimaryAction());
-    this.input.keyboard.on("keydown-TWO", () => this.handleSecondaryAction());
-    this.input.keyboard.on("keydown-THREE", () => this.handleTertiaryAction());
-    this.input.keyboard.on("keydown-FOUR", () => this.handleQuaternaryAction());
+    this.input.keyboard.on("keydown-ONE", () => this.handleNumberKey(1));
+    this.input.keyboard.on("keydown-TWO", () => this.handleNumberKey(2));
+    this.input.keyboard.on("keydown-THREE", () => this.handleNumberKey(3));
+    this.input.keyboard.on("keydown-FOUR", () => this.handleNumberKey(4));
+    this.input.keyboard.on("keydown-ESC", () => this.handlePauseToggle());
     this.input.keyboard.on("keydown-G", () => this.toggleDebug());
   }
 
@@ -201,10 +230,8 @@ export default class GameScene extends Phaser.Scene {
         this.stateMachine.setState(STATES.PLAYING);
         break;
       case STATES.PLAYING:
-        this.stateMachine.setState(STATES.LEVEL_COMPLETE);
         break;
       case STATES.PAUSE:
-        this.stateMachine.setState(STATES.PLAYING, { resume: true });
         break;
       case STATES.DEATH:
         this.stateMachine.setState(STATES.LEVEL_INTRO);
@@ -238,7 +265,6 @@ export default class GameScene extends Phaser.Scene {
         this.stateMachine.setState(STATES.TITLE);
         break;
       case STATES.PLAYING:
-        this.stateMachine.setState(STATES.DEATH);
         break;
       case STATES.DEATH:
         this.stateMachine.setState(STATES.GAME_OVER);
@@ -251,7 +277,6 @@ export default class GameScene extends Phaser.Scene {
   handleTertiaryAction() {
     switch (this.stateMachine.currentState) {
       case STATES.PLAYING:
-        this.stateMachine.setState(STATES.PAUSE);
         break;
       default:
         break;
@@ -260,7 +285,28 @@ export default class GameScene extends Phaser.Scene {
 
   handleQuaternaryAction() {
     if (this.stateMachine.currentState === STATES.PLAYING) {
-      this.stateMachine.setState(STATES.GAME_OVER);
+      return;
+    }
+  }
+
+  handleNumberKey(number) {
+    if (this.stateMachine.currentState === STATES.PLAYING) {
+      if (number === 1) {
+        this.selectWeapon(this.baseWeapon);
+      } else if (number === 2) {
+        this.selectWeapon(this.blasterWeapon);
+      }
+      return;
+    }
+
+    if (number === 1) {
+      this.handlePrimaryAction();
+    } else if (number === 2) {
+      this.handleSecondaryAction();
+    } else if (number === 3) {
+      this.handleTertiaryAction();
+    } else if (number === 4) {
+      this.handleQuaternaryAction();
     }
   }
 
@@ -299,8 +345,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (this.shootKey.isDown && time >= this.nextShotAt) {
-      this.fireBullet();
-      this.nextShotAt = time + this.bulletCooldownMs;
+      if (this.weapon.id !== "blaster" || this.blasterAmmo > 0) {
+        this.fireBullet();
+        this.nextShotAt = time + this.weapon.cooldownMs;
+      }
     }
 
     this.updateBullets(delta);
@@ -322,16 +370,18 @@ export default class GameScene extends Phaser.Scene {
     bullet.body.moves = true;
     bullet.body.enable = true;
     bullet.setData("dir", direction.clone());
+    bullet.setData("speed", this.weapon.bulletSpeed);
     bullet.body.setVelocity(
-      direction.x * this.bulletSpeed,
-      direction.y * this.bulletSpeed
+      direction.x * this.weapon.bulletSpeed,
+      direction.y * this.weapon.bulletSpeed
     );
     bullet.setVelocity(
-      direction.x * this.bulletSpeed,
-      direction.y * this.bulletSpeed
+      direction.x * this.weapon.bulletSpeed,
+      direction.y * this.weapon.bulletSpeed
     );
     this.bullets.add(bullet);
     this.lastBullet = bullet;
+    this.handleAmmoUse();
 
     this.time.delayedCall(1500, () => {
       bullet.destroy();
@@ -352,8 +402,9 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
-      const velocityX = direction.x * this.bulletSpeed;
-      const velocityY = direction.y * this.bulletSpeed;
+      const speed = bullet.getData("speed") || this.baseWeapon.bulletSpeed;
+      const velocityX = direction.x * speed;
+      const velocityY = direction.y * speed;
       bullet.x += velocityX * deltaSeconds;
       bullet.y += velocityY * deltaSeconds;
 
@@ -418,6 +469,11 @@ export default class GameScene extends Phaser.Scene {
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.paused = false;
     }
+    if (this.powerupTimer) {
+      this.powerupTimer.paused = false;
+    } else {
+      this.schedulePowerupSpawn();
+    }
   }
 
   enterPause(title, subtitle) {
@@ -437,6 +493,9 @@ export default class GameScene extends Phaser.Scene {
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.paused = true;
     }
+    if (this.powerupTimer) {
+      this.powerupTimer.paused = true;
+    }
   }
 
   enterNonGameplay(title, subtitle) {
@@ -453,6 +512,7 @@ export default class GameScene extends Phaser.Scene {
     this.nextShotAt = 0;
     this.isTankDying = false;
     this.tank.setAlpha(1);
+    this.resetWeaponState();
 
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.remove(false);
@@ -462,6 +522,8 @@ export default class GameScene extends Phaser.Scene {
       loop: true,
       callback: () => this.spawnAlien(),
     });
+
+    this.schedulePowerupSpawn();
   }
 
   deactivateGameplay() {
@@ -470,9 +532,14 @@ export default class GameScene extends Phaser.Scene {
     this.tank.setVelocity(0, 0);
     this.bullets.clear(true, true);
     this.aliens.clear(true, true);
+    this.powerups.clear(true, true);
     if (this.alienSpawnTimer) {
       this.alienSpawnTimer.remove(false);
       this.alienSpawnTimer = null;
+    }
+    if (this.powerupTimer) {
+      this.powerupTimer.remove(false);
+      this.powerupTimer = null;
     }
   }
 
@@ -685,7 +752,7 @@ export default class GameScene extends Phaser.Scene {
     this.hudLivesText = this.add
       .text(padding + 26, 6, "", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "12px",
+        fontSize: "10px",
         color: "#f6f0d6",
       })
       .setOrigin(0, 0);
@@ -705,7 +772,7 @@ export default class GameScene extends Phaser.Scene {
     this.hudScoreText = this.add
       .text(width / 2 - 60, 6, "", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "12px",
+        fontSize: "10px",
         color: "#f6f0d6",
       })
       .setOrigin(0, 0);
@@ -714,34 +781,49 @@ export default class GameScene extends Phaser.Scene {
     this.hudLevelText = this.add
       .text(width / 2 + 30, 6, "", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "12px",
+        fontSize: "10px",
         color: "#f6f0d6",
       })
       .setOrigin(0, 0);
     this.hudContainer.add(this.hudLevelText);
 
-    this.hudWeaponIcon = this.add
-      .image(width - 170, hudHeight / 2, "weapon")
+    this.hudWeaponBaseIcon = this.add
+      .image(width - 210, hudHeight / 2, "weapon")
       .setScale(1)
       .setOrigin(0.5, 0.5);
-    this.hudContainer.add(this.hudWeaponIcon);
+    this.hudContainer.add(this.hudWeaponBaseIcon);
 
-    this.hudWeaponText = this.add
-      .text(width - 150, 6, "1: Base", {
+    this.hudWeaponBaseText = this.add
+      .text(width - 190, 6, "1: Base", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "12px",
+        fontSize: "10px",
         color: "#f6f0d6",
       })
       .setOrigin(0, 0);
-    this.hudContainer.add(this.hudWeaponText);
+    this.hudContainer.add(this.hudWeaponBaseText);
 
-    this.hudBossText = this.add
-      .text(width - 70, 6, "Boss: ---", {
+    this.hudWeaponBlasterIcon = this.add
+      .image(width - 120, hudHeight / 2, "blaster")
+      .setScale(1)
+      .setOrigin(0.5, 0.5);
+    this.hudContainer.add(this.hudWeaponBlasterIcon);
+
+    this.hudWeaponBlasterText = this.add
+      .text(width - 100, 6, "2: Blaster 0", {
         fontFamily: "Georgia, 'Times New Roman', serif",
-        fontSize: "12px",
-        color: "#b9c0d4",
+        fontSize: "10px",
+        color: "#f6f0d6",
       })
       .setOrigin(0, 0);
+    this.hudContainer.add(this.hudWeaponBlasterText);
+
+    this.hudBossText = this.add
+      .text(width - 10, 6, "Boss: ---", {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        fontSize: "10px",
+        color: "#b9c0d4",
+      })
+      .setOrigin(1, 0);
     this.hudContainer.add(this.hudBossText);
 
     this.hudBossBar = this.add
@@ -764,6 +846,22 @@ export default class GameScene extends Phaser.Scene {
       const isFull = index < this.health;
       heart.setAlpha(isFull ? 1 : 0.25);
     });
+    this.hudWeaponBaseText.setText("1: Base");
+    const blasterLabel = this.weapon.id === "blaster" ? `2: Blaster ${this.blasterAmmo}` : "2: Blaster";
+    this.hudWeaponBlasterText.setText(blasterLabel);
+
+    const baseSelected = this.weapon.id === "base";
+    const blasterSelected = this.weapon.id === "blaster";
+    this.hudWeaponBaseIcon.setAlpha(baseSelected ? 1 : 0.5);
+    this.hudWeaponBaseText.setAlpha(baseSelected ? 1 : 0.6);
+
+    const blasterAvailable = this.blasterAmmo > 0;
+    this.hudWeaponBlasterIcon.setAlpha(
+      blasterAvailable ? (blasterSelected ? 1 : 0.5) : 0.2
+    );
+    this.hudWeaponBlasterText.setAlpha(
+      blasterAvailable ? (blasterSelected ? 1 : 0.6) : 0.2
+    );
   }
 
   toggleDebug() {
@@ -776,5 +874,80 @@ export default class GameScene extends Phaser.Scene {
     this.health = this.healthStart;
     this.score = 0;
     this.updateHud();
+  }
+
+  resetWeaponState() {
+    this.weapon = this.baseWeapon;
+    this.blasterAmmo = 0;
+    this.updateHud();
+  }
+
+  handleAmmoUse() {
+    if (this.weapon.id !== "blaster") {
+      return;
+    }
+    this.blasterAmmo = Math.max(0, this.blasterAmmo - 1);
+    if (this.blasterAmmo === 0) {
+      this.weapon = this.baseWeapon;
+    }
+    this.updateHud();
+  }
+
+  handlePowerupPickup(tank, powerup) {
+    if (!powerup.active) {
+      return;
+    }
+    powerup.destroy();
+    this.blasterAmmo = this.blasterAmmoMax;
+    this.weapon = this.blasterWeapon;
+    this.updateHud();
+    this.schedulePowerupSpawn();
+  }
+
+  schedulePowerupSpawn() {
+    if (this.powerupTimer) {
+      this.powerupTimer.remove(false);
+    }
+    const delay = Phaser.Math.Between(5000, 30000);
+    this.powerupTimer = this.time.delayedCall(delay, () => {
+      this.spawnPowerup();
+    });
+  }
+
+  spawnPowerup() {
+    if (this.stateMachine.currentState !== STATES.PLAYING) {
+      this.schedulePowerupSpawn();
+      return;
+    }
+    if (this.powerups.countActive(true) > 0) {
+      this.schedulePowerupSpawn();
+      return;
+    }
+    const { width, height } = this.scale;
+    const margin = 40;
+    const x = Phaser.Math.Between(margin, width - margin);
+    const y = Phaser.Math.Between(margin + 40, height - margin);
+    const powerup = this.physics.add.image(x, y, "blaster");
+    powerup.body.setAllowGravity(false);
+    powerup.setDepth(1);
+    this.powerups.add(powerup);
+    this.schedulePowerupSpawn();
+  }
+
+  selectWeapon(weapon) {
+    if (weapon.id === "blaster" && this.blasterAmmo === 0) {
+      this.weapon = this.baseWeapon;
+    } else {
+      this.weapon = weapon;
+    }
+    this.updateHud();
+  }
+
+  handlePauseToggle() {
+    if (this.stateMachine.currentState === STATES.PLAYING) {
+      this.stateMachine.setState(STATES.PAUSE);
+    } else if (this.stateMachine.currentState === STATES.PAUSE) {
+      this.stateMachine.setState(STATES.PLAYING, { resume: true });
+    }
   }
 }
