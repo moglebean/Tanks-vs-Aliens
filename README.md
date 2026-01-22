@@ -54,3 +54,5 @@ Other power ups:
 6. [x] Implemnt the blaster master power up.  It should pop up randomly every 5-30s.  It will have an icon that looks like a mini gun.  Implement the gun physics per the above description (very fast fire, faster moving bullets, limited ammo).  Add the ability to change weapon with # keys (1=base, 2=blaster master), show the ammo when selected.  Grey out the icon when no ammo.  Switch to the weapon immmediately on power up.  get rid of the test keys for transitions on the main screen.  Make escape the pause button.
 
 7. [x] Lets implement some levels.  For now, each level will be one screen in size.  Have a few different obstacles (walls, rocks, water).  Implement rules at your discretion on which the tank vs enemies vs bullets can traverse.
+
+8.  [] Bug:  Power ups should persist when level is successfully completed.
