@@ -55,4 +55,9 @@ Other power ups:
 
 7. [x] Lets implement some levels.  For now, each level will be one screen in size.  Have a few different obstacles (walls, rocks, water).  Implement rules at your discretion on which the tank vs enemies vs bullets can traverse.
 
-8.  [] Bug:  Power ups should persist when level is successfully completed.
+8.  [] Bug:  Power ups should persaist when level is successfully completed.
+9.  [] Random terrain is terrible.  Use a better generation aglorithm, or have customized levels.
+10. [] Eliminate extra key presses to get between states.  Implement uniform controls.
+11. [] More enemy types...
+12. [] More powerups
+13. [] Bosses
